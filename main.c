@@ -26,15 +26,14 @@ typedef struct State {
   Vector2 masterDim;
   Vector2 slaveDim;
   int stateChanged;
-  const char *masterImg;
-  const char *slaveImg;
+  const char *droneImg;
   int running;
+  int updateFlight;
 } State;
 
-void UpdateVelocityPro(Vector2 p1, Vector2 p2, float frameTime,
-                       Vector2 *velocity) {
+void UpdateVelocity(Vector2 p1, Vector2 p2, float frameTime,
+                    Vector2 *velocity) {
 
-  float eps = 0.02;
   int dx = p2.x - p1.x;
   int dy = p2.y - p1.y;
 
@@ -45,15 +44,30 @@ void UpdateVelocityPro(Vector2 p1, Vector2 p2, float frameTime,
   velocity->y = speedY;
 }
 
-void GetFlightPatternCoords(State state, Vector2 *coords) {
+Vector2 *GetVelocities(Vector2 *velocities, Vector2 *newCoords, Drone *slaves,
+                       int slaveCount, float frameTime) {
+
+  for (int i = 0; i < slaveCount; i++) {
+    int dx = slaves[i].rect.x - newCoords[i].x;
+    int dy = slaves[i].rect.y - newCoords[i].y;
+
+    float vx = dx * frameTime;
+    float vy = dy * frameTime;
+
+    velocities[i] = (Vector2){.x = dx, .y = dy};
+  }
+  return velocities;
+}
+
+void GetNewCoords(Vector2 *coords, Drone *slaves, State state) {
   int slaveCount = state.slaveCount;
-  int startingPosY = state.startingPos.y;
-  int startingPosX = state.startingPos.x;
 
   if (strcmp(state.pattern, "Linear") == 0) {
+
     for (int i = 0; i < slaveCount; i++) {
-      int xpos = startingPosX - 1.5 * i * state.offset;
-      int ypos = startingPosY;
+      int xpos = slaves[i].rect.x;
+      int ypos = slaves[i].rect.y + state.offset - state.slaveDim.y;
+
       Vector2 icoord = (Vector2){.x = xpos, .y = ypos};
       coords[i] = icoord;
     }
@@ -62,19 +76,23 @@ void GetFlightPatternCoords(State state, Vector2 *coords) {
     int assemblyLineCount = (int)slaveCount / 2;
 
     // assembly line 1
-    for (int i = 0; i < assemblyLineCount; i++) {
-      int xpos = (startingPosX) - (2 * i * state.offset);
-      int ypos = startingPosY - state.offset;
-      Vector2 icoord = (Vector2){.x = xpos, .y = ypos};
-      coords[i] = icoord;
+    for (int j = 0; j < assemblyLineCount; j++) {
+
+      int xpos = slaves[j].rect.x;
+      int ypos = slaves[j].rect.y - state.offset;
+
+      Vector2 jcoord = (Vector2){.x = xpos, .y = ypos};
+      coords[j] = jcoord;
     }
 
     // assembly line 2
-    for (int j = 0; j < slaveCount - assemblyLineCount; j++) {
-      int xpos = (startingPosX) - (2 * j * state.offset);
-      int ypos = startingPosY + 1.5 * state.offset;
-      Vector2 jcoord = (Vector2){.x = xpos, .y = ypos};
-      coords[j + assemblyLineCount] = jcoord;
+    for (int k = 0; k < slaveCount - assemblyLineCount; k++) {
+
+      int xpos = slaves[k].rect.x + state.slaveDim.x - state.offset;
+      int ypos = slaves[k].rect.y + state.slaveDim.y + state.offset;
+
+      Vector2 kcoord = (Vector2){.x = xpos, .y = ypos};
+      coords[k + assemblyLineCount] = kcoord;
     }
   }
 }
@@ -92,22 +110,19 @@ int main() {
       .masterDim = (Vector2){.x = 100, .y = 70},
       .slaveDim = (Vector2){.x = 100, .y = 70},
       .stateChanged = 0,
-      .masterImg = "./assets/drone.png",
-      .slaveImg = "./assets/drone.png",
+      .droneImg = "./assets/drone.png",
+      .updateFlight = 0,
   };
 
   Drone *slaves = malloc(sizeof(Drone) * state.slaveCount);
-  Vector2 *coords = malloc(sizeof(Vector2) * state.slaveCount);
+  // Vector2 *coords = malloc(sizeof(Vector2) * state.slaveCount);
   Vector2 *newCoords = malloc(sizeof(Vector2) * state.slaveCount);
 
-  Image masterImg = LoadImage(state.slaveImg);
-  Image slaveImg = LoadImage(state.masterImg);
+  Vector2 *velocities = malloc(sizeof(Vector2) * state.slaveCount);
 
-  ImageResize(&masterImg, state.masterDim.x, state.masterDim.y);
-  ImageResize(&slaveImg, state.slaveDim.x, state.slaveDim.y);
-
-  Texture masterImgTexture = LoadTextureFromImage(masterImg);
-  Texture slaveImgTexture = LoadTextureFromImage(slaveImg);
+  Image droneImg = LoadImage(state.droneImg);
+  ImageResize(&droneImg, state.masterDim.x, state.masterDim.y);
+  Texture droneImgTexture = LoadTextureFromImage(droneImg);
 
   Drone master = (Drone){
       .rect = (Rectangle){.x = 1.3 * state.startingPos.x,
@@ -117,7 +132,7 @@ int main() {
       .color = RAYWHITE,
       .rotation = 0.0f,
       .velocity = (Vector2){.x = 1, .y = 0},
-      .texture = (Texture2D)slaveImgTexture,
+      .texture = (Texture2D)droneImgTexture,
   };
 
   for (int i = 0; i < state.slaveCount; i++) {
@@ -130,8 +145,12 @@ int main() {
         .color = BLUE,
         .rotation = 0.0f,
         .velocity = (Vector2){.x = 0, .y = 0},
-        .texture = (Texture2D)slaveImgTexture,
+        .texture = (Texture2D)droneImgTexture,
     };
+  }
+
+  for (int i = 0; i < state.slaveCount; i++) {
+    newCoords[i] = (Vector2){.x = slaves[i].rect.x, .y = slaves[i].rect.y};
   }
 
   while (!WindowShouldClose()) {
@@ -143,10 +162,18 @@ int main() {
     if (IsKeyPressed(KEY_R)) {
       master.rect.x = state.startingPos.x + 1.4 * state.offset;
       master.rect.y = state.startingPos.y;
+
+      for (int i = 0; i < state.slaveCount; i++) {
+        slaves[i].rect.x = state.startingPos.x - 1.5 * i * state.offset;
+        slaves[i].rect.y = state.startingPos.y;
+      }
     }
 
     if (IsKeyPressed(KEY_SPACE)) {
       state.running = ~state.running;
+      for (int i = 0; i < state.slaveCount; i++) {
+        DrawCircle(slaves[i].rect.x, slaves[i].rect.y, 10, RED);
+      }
     }
 
     if (IsKeyPressed(KEY_A)) {
@@ -168,29 +195,43 @@ int main() {
     }
 
     if (state.stateChanged) {
-      GetFlightPatternCoords(state, newCoords);
+      GetNewCoords(newCoords, slaves, state);
 
-      // update coords
-      for (int i = 0; i < state.slaveCount; i++) {
-        UpdateVelocityPro(
-            (Vector2){.x = slaves[i].rect.x, .y = slaves[i].rect.y},
-            newCoords[i], frameTime, &slaves[i].velocity);
-      }
+      // for (int i = 0; i < state.slaveCount; i++) {
+      //   UpdateVelocity((Vector2){.x = slaves[i].rect.x, .y =
+      //   slaves[i].rect.y},
+      //                  newCoords[i], frameTime, &slaves[i].velocity);
+      // }
 
-      // apply motion
-      for (int i = 0; i < state.slaveCount; i++) {
-        slaves[i].rect.x += slaves[i].velocity.x;
-        slaves[i].rect.y += slaves[i].velocity.y;
-      }
+      GetVelocities(velocities, newCoords, slaves, state.slaveCount, frameTime);
+      state.updateFlight = 1;
     }
+
+    // NOTE: trying constant velocity update
+    // and have velocity move between 0 and the newly calcultated
+
+    // if (state.updateFlight) {
+    //   for (int i = 0; i < state.slaveCount; i++) {
+    //     slaves[i].rect.x += velocities[i].x;
+    //     slaves[i].rect.y += velocities[i].y;
+    //   }
+    //
+    //   state.updateFlight = 0;
+    // }
 
     if (state.running) {
       master.rect.x += master.velocity.x;
       master.rect.y += master.velocity.y;
+
+      for (int i = 0; i < state.slaveCount; i++) {
+        slaves[i].rect.x += master.velocity.x;
+      }
     }
 
     for (int i = 0; i < state.slaveCount; i++) {
       DrawCircle(newCoords[i].x, newCoords[i].y, 10, YELLOW);
+      DrawText(TextFormat("%d", i), newCoords[i].x, newCoords[i].y - 30, 20,
+               RAYWHITE);
     }
 
     DrawFPS(50, 50);
@@ -198,6 +239,8 @@ int main() {
     DrawTexture(master.texture, master.rect.x, master.rect.y, master.color);
 
     for (int i = 0; i < state.slaveCount; i++) {
+      DrawText(TextFormat("%d", i), slaves[i].rect.x,
+               slaves[i].rect.y + 0.7 * state.offset, 30, RAYWHITE);
       DrawTexture(slaves[i].texture, slaves[i].rect.x, slaves[i].rect.y,
                   slaves[i].color);
     }
@@ -208,8 +251,8 @@ int main() {
   CloseWindow();
 
   free(slaves);
-  free(coords);
   free(newCoords);
+  free(velocities);
 
   return 0;
 }
